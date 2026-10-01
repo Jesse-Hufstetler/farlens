@@ -20,6 +20,7 @@ enum Kind {
     Slider { min: f32, max: f32, step: f32, log: bool, label: &'static str, get: Get, set: Set, fmt: Fmt, text: HWND },
     Check { get: fn(&Settings) -> bool, set: fn(&mut Settings, bool) },
     Radio { on: fn(&Settings) -> bool, pick: fn(&mut Settings) },
+    Action { run: fn() },
 }
 
 struct Ctl {
@@ -57,7 +58,6 @@ pub fn register() {
     }
 }
 
-fn x1(v: f32) -> String { format!("{v:.1}×") }
 fn px(v: f32) -> String { format!("{v:.0} px") }
 fn x2(v: f32) -> String { format!("{v:.2}") }
 fn secs(v: f32) -> String { if v <= 0.001 { "locked on".into() } else { format!("{:.0} ms", v * 1000.0) } }
@@ -134,6 +134,12 @@ impl Layout {
         self.ctls.push(Ctl { hwnd: hw, id, kind: Kind::Check { get, set } });
     }
 
+    fn button(&mut self, label: &str, x: i32, w: i32, run: fn()) {
+        let id = self.id();
+        let hw = self.child(w!("BUTTON"), label, BS_PUSHBUTTON as u32, x, self.y, w, 28, id);
+        self.ctls.push(Ctl { hwnd: hw, id, kind: Kind::Action { run } });
+    }
+
     fn radio(&mut self, label: &str, x: i32, w: i32, first: bool, on: fn(&Settings) -> bool, pick: fn(&mut Settings)) {
         let id = self.id();
         let style = BS_AUTORADIOBUTTON as u32 | if first { WS_GROUP.0 } else { 0 };
@@ -207,7 +213,11 @@ pub fn create() {
         l.y += 8;
         l.check("Start with Windows", 12, 300, |_| crate::autostart_enabled(), |_, v| crate::set_autostart(v));
         l.y += 30;
-        l.child(w!("STATIC"), "Ctrl+Alt+wheel (or Ctrl+Alt + / -) changes zoom.", 0, 12, l.y, 400, 18, -1);
+        l.heading("Hotkeys (work from anywhere)");
+        l.child(w!("STATIC"), "Ctrl+Alt+Z  -  magnifier on / off\r\nCtrl+Alt+S  -  open this window (moves the mouse here)\r\nCtrl+Alt+Q  -  quit Farlens\r\nCtrl+Alt+wheel, or Ctrl+Alt + / -  -  zoom", 0, 12, l.y, 410, 80, -1);
+        l.y += 84;
+        l.button("Quit Farlens", 12, 140, || PostQuitMessage(0));
+        l.y += 4;
         l.y += 26;
 
         let (cw, ch) = ((432.0 * s) as i32, (l.y as f32 * s) as i32);
@@ -268,6 +278,7 @@ pub fn sync() {
                     Kind::Check { get, .. } => {
                         SendMessageW(c.hwnd, BM_SETCHECK, Some(WPARAM(get(&s) as usize)), Some(LPARAM(0)));
                     }
+                    Kind::Action { .. } => {}
                     Kind::Radio { on, .. } => {
                         SendMessageW(c.hwnd, BM_SETCHECK, Some(WPARAM(on(&s) as usize)), Some(LPARAM(0)));
                     }
@@ -310,18 +321,22 @@ fn remember(hwnd: HWND) {
     }
 }
 
+/// Bring the window up and put the mouse on its title bar, so the magnified view jumps
+/// to it (it sits at its real screen position, wherever the camera currently looks).
 pub fn show() {
-    UI.with(|u| {
-        if let Some(u) = u.borrow().as_ref() {
-            unsafe {
-                place(u.hwnd);
-                let _ = ShowWindow(u.hwnd, SW_SHOW);
-                let _ = SetForegroundWindow(u.hwnd);
-            }
+    let hwnd = UI.with(|u| u.borrow().as_ref().map(|u| u.hwnd));
+    let Some(hwnd) = hwnd else { return };
+    unsafe {
+        place(hwnd);
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = SetForegroundWindow(hwnd);
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r).is_ok() {
+            let dpi = GetDpiForWindow(hwnd).max(96) as i32;
+            let _ = SetCursorPos((r.left + r.right) / 2, r.top + 16 * dpi / 96);
         }
-    });
+    }
 }
-
 unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     unsafe {
         match m {
@@ -351,7 +366,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                 let id = (w.0 & 0xFFFF) as i32;
                 let code = ((w.0 >> 16) & 0xFFFF) as u32;
                 if code == BN_CLICKED {
-                    enum Act { Check(fn(&mut Settings, bool), bool), Radio(fn(&mut Settings)) }
+                    enum Act { Check(fn(&mut Settings, bool), bool), Radio(fn(&mut Settings)), Run(fn()) }
                     let act = UI.with(|u| {
                         let u = u.borrow();
                         let u = u.as_ref()?;
@@ -363,6 +378,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                                         Some(Act::Check(*set, on))
                                     }
                                     Kind::Radio { pick, .. } => Some(Act::Radio(*pick)),
+                                    Kind::Action { run } => Some(Act::Run(*run)),
                                     _ => None,
                                 };
                             }
@@ -372,6 +388,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                     match act {
                         Some(Act::Check(set, on)) => settings::update(|s| set(s, on)),
                         Some(Act::Radio(pick)) => settings::update(|s| pick(s)),
+                        Some(Act::Run(run)) => run(),
                         None => {}
                     }
                 }

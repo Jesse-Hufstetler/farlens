@@ -22,9 +22,8 @@ const WM_TRAY: u32 = WM_APP + 1;
 const HK_TOGGLE: i32 = 1;
 const HK_IN: i32 = 2;
 const HK_OUT: i32 = 3;
-const CMD_TOGGLE: usize = 1;
-const CMD_SETTINGS: usize = 2;
-const CMD_EXIT: usize = 3;
+const HK_SETTINGS: i32 = 4;
+const HK_QUIT: i32 = 5;
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 
 static REBUILD: AtomicBool = AtomicBool::new(false);
@@ -67,6 +66,8 @@ fn main() {
         if dump.is_none() {
             let _ = RegisterHotKey(Some(hwnd), HK_TOGGLE, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Z' as u32);
             let _ = RegisterHotKey(Some(hwnd), HK_IN, MOD_CONTROL | MOD_ALT, VK_OEM_PLUS.0 as u32);
+            let _ = RegisterHotKey(Some(hwnd), HK_SETTINGS, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'S' as u32);
+            let _ = RegisterHotKey(Some(hwnd), HK_QUIT, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q' as u32);
             let _ = RegisterHotKey(Some(hwnd), HK_OUT, MOD_CONTROL | MOD_ALT, VK_OEM_MINUS.0 as u32);
             add_tray(hwnd);
             ui::create();
@@ -240,23 +241,16 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LR
                     HK_TOGGLE => toggle(),
                     HK_IN => zoom_by(1.2),
                     HK_OUT => zoom_by(1.0 / 1.2),
+                    HK_SETTINGS => ui::show(),
+                    HK_QUIT => PostQuitMessage(0),
                     _ => {}
                 }
                 LRESULT(0)
             }
             WM_TRAY => {
                 match (l.0 & 0xFFFF) as u32 {
-                    WM_LBUTTONUP | WM_LBUTTONDBLCLK => ui::show(),
-                    WM_RBUTTONUP => tray_menu(h),
-                    _ => {}
-                }
-                LRESULT(0)
-            }
-            WM_COMMAND => {
-                match w.0 & 0xFFFF {
-                    CMD_TOGGLE => toggle(),
-                    CMD_SETTINGS => ui::show(),
-                    CMD_EXIT => PostQuitMessage(0),
+                    // Any click on the tray icon: open the control panel and move the mouse to it.
+                    WM_LBUTTONUP | WM_LBUTTONDBLCLK | WM_RBUTTONUP => ui::show(),
                     _ => {}
                 }
                 LRESULT(0)
@@ -278,23 +272,6 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LR
 fn toggle() {
     settings::update(|s| s.active = !s.active);
     ui::sync();
-}
-
-fn tray_menu(h: HWND) {
-    unsafe {
-        let Ok(menu) = CreatePopupMenu() else { return };
-        let on = settings::get().active;
-        let _ = AppendMenuW(menu, MF_STRING | if on { MF_CHECKED } else { MF_UNCHECKED }, CMD_TOGGLE, w!("Magnifier on\tCtrl+Alt+Z"));
-        let _ = AppendMenuW(menu, MF_STRING, CMD_SETTINGS, w!("Settings..."));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(menu, MF_STRING, CMD_EXIT, w!("Exit"));
-        let mut pt = POINT::default();
-        let _ = GetCursorPos(&mut pt);
-        let _ = SetForegroundWindow(h);
-        let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, Some(0), h, None);
-        let _ = PostMessageW(Some(h), WM_NULL, WPARAM(0), LPARAM(0));
-        let _ = DestroyMenu(menu);
-    }
 }
 
 fn tray_icon() -> HICON {
