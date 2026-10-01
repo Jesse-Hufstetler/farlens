@@ -55,6 +55,7 @@ float4 ps(VO i) : SV_Target
     float R = c[6].w;
     float A = c[7].x;
     float sT = c[7].y, sB = c[7].z, sL = c[7].w, sR = c[8].x;
+    bool bgDesk = c[8].y > 0.5;
 
     float2 ndc = float2(i.pos.x / scrSize.x * 2 - 1, 1 - i.pos.y / scrSize.y * 2);
     float2 w = ndc;
@@ -95,7 +96,8 @@ float4 ps(VO i) : SV_Target
         col = lerp(pix, smooth_, smoothstep(0.9, 1.3, fp));
     }
 
-    float3 rgb = inside ? col.rgb : float3(0.035, 0.035, 0.05);
+    float3 bg = bgDesk ? scr.SampleLevel(sLin, i.pos.xy / scrSize, 0).rgb : float3(0.035, 0.035, 0.05);
+    float3 rgb = inside ? col.rgb : bg;
 
     float2 local = hit - (M - hot);
     float2 lc = filt == 0 ? sharpUV(local) : local;

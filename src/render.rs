@@ -422,7 +422,7 @@ impl Renderer {
             [mx, my, vis, 0.0],
             [self.cur_hot.0 as f32, self.cur_hot.1 as f32, if s.warp_shape == Shape::Rect { 1.0 } else { 0.0 }, s.warp_radius],
             [s.warp_amount, b(s.warp_top), b(s.warp_bottom), b(s.warp_left)],
-            [b(s.warp_right), 0.0, 0.0, 0.0],
+            [b(s.warp_right), b(s.bg_desktop), 0.0, 0.0],
         ];
 
         unsafe {

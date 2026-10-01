@@ -177,6 +177,8 @@ pub fn create() {
         l.log_slider("Aim lag", 0.005, 3.0, |s| s.aim_lag, |s, v| s.aim_lag = v, secs);
         l.check("Hide the real mouse cursor", 12, 300, |s| s.hide_cursor, |s, v| s.hide_cursor = v);
         l.y += 26;
+        l.check("Show the normal desktop beyond the plane's edge", 12, 400, |s| s.bg_desktop, |s, v| s.bg_desktop = v);
+        l.y += 26;
 
         l.heading("Warp");
         l.check("Warp on", 12, 120, |s| s.warp_on, |s, v| s.warp_on = v);
