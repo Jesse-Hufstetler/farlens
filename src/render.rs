@@ -251,7 +251,7 @@ impl Renderer {
             device.CreateShaderResourceView(&cur_tex, None, Some(&mut cur_srv))?;
 
             let bd = D3D11_BUFFER_DESC {
-                ByteWidth: 9 * 16,
+                ByteWidth: 10 * 16,
                 Usage: D3D11_USAGE_DEFAULT,
                 BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
                 ..Default::default()
@@ -494,7 +494,7 @@ impl Renderer {
         let up = cross(fwd, right);
         let (vis, _) = cursor::current().map(|(_, v)| ((v as u8) as f32, 0)).unwrap_or((0.0, 0));
         let b = |v: bool| if v { 1.0 } else { 0.0 };
-        let cb: [[f32; 4]; 9] = [
+        let cb: [[f32; 4]; 10] = [
             [wf, hf, wf, hf],
             [c.px, c.py, d, tan_half],
             [right[0], right[1], right[2], aspect],
@@ -504,6 +504,7 @@ impl Renderer {
             [self.cur_hot.0 as f32, self.cur_hot.1 as f32, if s.warp_shape == Shape::Rect { 1.0 } else { 0.0 }, s.warp_radius],
             [s.warp_amount * warp_k, b(s.warp_top), b(s.warp_bottom), b(s.warp_left)],
             [b(s.warp_right), b(s.bg_desktop), 0.0, 0.0],
+            [s.shadow, s.shadow_size, s.bg_level, 0.0],
         ];
 
         unsafe {

@@ -25,6 +25,11 @@ pub struct Settings {
     pub hide_cursor: bool,
     /// Show the unmagnified desktop instead of black beyond the plane's edge.
     pub bg_desktop: bool,
+    /// Drop shadow under the plane: darkness 0..1 (0 = off) and reach in plane pixels.
+    pub shadow: f32,
+    pub shadow_size: f32,
+    /// Brightness of the empty background (0 = black).
+    pub bg_level: f32,
     pub warp_on: bool,
     pub warp_shape: Shape,
     pub warp_radius: f32,
@@ -49,6 +54,9 @@ impl Settings {
             smooth: 0.05,
             hide_cursor: true,
             bg_desktop: false,
+            shadow: 0.5,
+            shadow_size: 28.0,
+            bg_level: 0.13,
             warp_on: true,
             warp_shape: Shape::Rect,
             warp_radius: 0.83,
@@ -73,6 +81,9 @@ impl Settings {
             ("smooth", self.smooth.to_string()),
             ("hide_cursor", b(self.hide_cursor)),
             ("bg_desktop", b(self.bg_desktop)),
+            ("shadow", self.shadow.to_string()),
+            ("shadow_size", self.shadow_size.to_string()),
+            ("bg_level", self.bg_level.to_string()),
             ("warp_on", b(self.warp_on)),
             ("warp_shape", ((self.warp_shape == Shape::Rect) as u8).to_string()),
             ("warp_radius", self.warp_radius.to_string()),
@@ -98,6 +109,9 @@ impl Settings {
             "smooth" => if let Some(x) = f() { self.smooth = x },
             "hide_cursor" => self.hide_cursor = b(),
             "bg_desktop" => self.bg_desktop = b(),
+            "shadow" => if let Some(x) = f() { self.shadow = x },
+            "shadow_size" => if let Some(x) = f() { self.shadow_size = x },
+            "bg_level" => if let Some(x) = f() { self.bg_level = x },
             "warp_on" => self.warp_on = b(),
             "warp_shape" => self.warp_shape = if b() { Shape::Rect } else { Shape::Circle },
             "warp_radius" => if let Some(x) = f() { self.warp_radius = x },
@@ -118,6 +132,9 @@ impl Settings {
         self.lag = self.lag.clamp(0.0, 3.0);
         self.max_tilt = self.max_tilt.clamp(1.0, 80.0);
         self.smooth = self.smooth.clamp(0.0, 3.0);
+        self.shadow = self.shadow.clamp(0.0, 1.0);
+        self.shadow_size = self.shadow_size.clamp(2.0, 300.0);
+        self.bg_level = self.bg_level.clamp(0.0, 0.6);
         self.warp_radius = self.warp_radius.clamp(0.0, 4.0);
         self.warp_amount = self.warp_amount.clamp(0.0, 30.0);
         self.hover_factor = self.hover_factor.clamp(0.05, 1.0);

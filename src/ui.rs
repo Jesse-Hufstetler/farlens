@@ -58,6 +58,7 @@ pub fn register() {
 }
 
 fn x1(v: f32) -> String { format!("{v:.1}×") }
+fn px(v: f32) -> String { format!("{v:.0} px") }
 fn x2(v: f32) -> String { format!("{v:.2}") }
 fn secs(v: f32) -> String { if v <= 0.001 { "locked on".into() } else { format!("{:.0} ms", v * 1000.0) } }
 fn deg(v: f32) -> String { format!("{v:.0}°") }
@@ -192,6 +193,11 @@ pub fn create() {
         l.check("Left", 190, 80, |s| s.warp_left, |s, v| s.warp_left = v);
         l.check("Right", 280, 80, |s| s.warp_right, |s, v| s.warp_right = v);
         l.y += 26;
+
+        l.heading("Pane");
+        l.slider("Shadow", 0.0, 1.0, 0.01, |s| s.shadow, |s, v| s.shadow = v, x2);
+        l.slider("Shadow size", 2.0, 150.0, 1.0, |s| s.shadow_size, |s, v| s.shadow_size = v, px);
+        l.slider("Background", 0.0, 0.5, 0.005, |s| s.bg_level, |s, v| s.bg_level = v, x2);
 
         l.heading("Context");
         l.check("Zoom out while the mouse is over the bare desktop", 12, 400, |s| s.hover_on, |s, v| s.hover_on = v);

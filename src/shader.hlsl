@@ -2,7 +2,7 @@
 // (optionally warped) screen position and lands on the floating desktop plane.
 // All parameters arrive packed in c[0..8] (see render.rs, `write_constants`).
 
-cbuffer C : register(b0) { float4 c[9]; };
+cbuffer C : register(b0) { float4 c[10]; };
 
 Texture2D scr : register(t0);   // the captured desktop, with a full mip chain
 Texture2D cur : register(t1);   // the mouse cursor, 128x128 straight alpha
@@ -56,6 +56,7 @@ float4 ps(VO i) : SV_Target
     float A = c[7].x;
     float sT = c[7].y, sB = c[7].z, sL = c[7].w, sR = c[8].x;
     bool bgDesk = c[8].y > 0.5;
+    float shStrength = c[9].x, shSize = c[9].y, bgLevel = c[9].z;
 
     float2 ndc = float2(i.pos.x / scrSize.x * 2 - 1, 1 - i.pos.y / scrSize.y * 2);
     float2 w = ndc;
@@ -96,11 +97,11 @@ float4 ps(VO i) : SV_Target
         col = lerp(pix, smooth_, smoothstep(0.9, 1.3, fp));
     }
 
-    float3 bg = bgDesk ? scr.SampleLevel(sLin, i.pos.xy / scrSize, 0).rgb : float3(0.13, 0.13, 0.15);
+    float3 bg = bgDesk ? scr.SampleLevel(sLin, i.pos.xy / scrSize, 0).rgb : float3(bgLevel, bgLevel, bgLevel * 1.15);
     // Soft drop shadow under the floating plane (in plane pixels, so it scales with zoom).
-    float2 q = hit - float2(0, 10);
+    float2 q = hit - float2(0, shSize * 0.35);
     float2 dd = max(max(-q, q - texSize), 0);
-    float shadow = valid ? exp(-length(dd) / 28.0) * 0.5 : 0;
+    float shadow = valid ? exp(-length(dd) / shSize) * shStrength : 0;
     bg *= 1 - shadow;
     float3 rgb = inside ? col.rgb : bg;
 
