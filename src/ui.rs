@@ -172,9 +172,8 @@ pub fn create() {
         l.slider("Zoom", 0.25, 16.0, 0.05, |s| s.zoom, |s, v| s.zoom = v, x2_zoom);
         l.log_slider("Chase lag", 0.005, 3.0, |s| s.lag, |s, v| s.lag = v, secs);
         l.slider("Max tilt", 5.0, 80.0, 1.0, |s| s.max_tilt, |s, v| s.max_tilt = v, deg);
-        l.check("Chase the mouse (let it drift off-center)", 12, 400, |s| s.aim_chase, |s, v| s.aim_chase = v);
+        l.check("Chase the mouse (flat view, mouse may drift off-center)", 12, 400, |s| s.aim_chase, |s, v| s.aim_chase = v);
         l.y += 26;
-        l.log_slider("Aim lag", 0.005, 3.0, |s| s.aim_lag, |s, v| s.aim_lag = v, secs);
         l.check("Hide the real mouse cursor", 12, 300, |s| s.hide_cursor, |s, v| s.hide_cursor = v);
         l.y += 26;
         l.check("Show the normal desktop beyond the plane's edge", 12, 400, |s| s.bg_desktop, |s, v| s.bg_desktop = v);

@@ -445,14 +445,22 @@ impl Renderer {
             c.px += (tx - c.px) * a;
             c.py += (ty - c.py) * a;
         }
-        let aim_lag = tau(if s.aim_chase { s.aim_lag } else { 0.0 });
-        if aim_lag > 0.001 {
-            let a = 1.0 - (-dt / aim_lag).exp();
-            c.ax += (tx - c.ax) * a;
-            c.ay += (ty - c.ay) * a;
+        // One smoothed mouse position (px,py) drives the camera. With "chase the mouse" the
+        // aim is that same smoothed point (flat, no tilt); otherwise the aim stays on the
+        // real mouse and the lagging camera leans toward it.
+        if s.aim_chase {
+            c.ax = c.px;
+            c.ay = c.py;
         } else {
-            c.ax = tx;
-            c.ay = ty;
+            let aim_lag = tau(0.0);
+            if aim_lag > 0.001 {
+                let a = 1.0 - (-dt / aim_lag).exp();
+                c.ax += (tx - c.ax) * a;
+                c.ay += (ty - c.ay) * a;
+            } else {
+                c.ax = tx;
+                c.ay = ty;
+            }
         }
         let (mut ox, mut oy) = (c.ax - c.px, c.ay - c.py);
         let max_off = d * s.max_tilt.to_radians().tan();
