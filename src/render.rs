@@ -321,7 +321,7 @@ impl Renderer {
         unsafe {
             let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut res: Option<IDXGIResource> = None;
-            let timeout = if self.got_frame { 0 } else { 250 };
+            let timeout = if self.got_frame { 0 } else { 50 };
             match self.dup.AcquireNextFrame(timeout, &mut info, &mut res) {
                 Ok(()) => {
                     if let Some(res) = res {
@@ -333,9 +333,43 @@ impl Renderer {
                     let _ = self.dup.ReleaseFrame();
                     Ok(())
                 }
-                Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => Ok(()),
+                Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
+                    // Duplication only reports changes; on a still desktop it can stay silent
+                    // for a long time, so take the first image with GDI instead.
+                    if !self.got_frame {
+                        self.grab_gdi();
+                    }
+                    Ok(())
+                }
                 Err(e) => Err(e),
             }
+        }
+    }
+
+    fn grab_gdi(&mut self) {
+        use windows::Win32::Graphics::Gdi::*;
+        unsafe {
+            let sdc = GetDC(None);
+            let dc = CreateCompatibleDC(Some(sdc));
+            let mut bi = BITMAPINFO::default();
+            bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bi.bmiHeader.biWidth = self.w as i32;
+            bi.bmiHeader.biHeight = -(self.h as i32);
+            bi.bmiHeader.biPlanes = 1;
+            bi.bmiHeader.biBitCount = 32;
+            let mut bits: *mut c_void = std::ptr::null_mut();
+            if let Ok(bmp) = CreateDIBSection(Some(dc), &bi, DIB_RGB_COLORS, &mut bits, None, 0) {
+                let old = SelectObject(dc, bmp.into());
+                if BitBlt(dc, 0, 0, self.w as i32, self.h as i32, Some(sdc), 0, 0, SRCCOPY | CAPTUREBLT).is_ok() {
+                    self.ctx.UpdateSubresource(&self.screen, 0, None, bits as *const c_void, self.w * 4, 0);
+                    self.ctx.GenerateMips(&self.screen_srv);
+                    self.got_frame = true;
+                }
+                SelectObject(dc, old);
+                let _ = DeleteObject(bmp.into());
+            }
+            let _ = DeleteDC(dc);
+            ReleaseDC(None, sdc);
         }
     }
 
