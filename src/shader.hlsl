@@ -96,7 +96,12 @@ float4 ps(VO i) : SV_Target
         col = lerp(pix, smooth_, smoothstep(0.9, 1.3, fp));
     }
 
-    float3 bg = bgDesk ? scr.SampleLevel(sLin, i.pos.xy / scrSize, 0).rgb : float3(0.035, 0.035, 0.05);
+    float3 bg = bgDesk ? scr.SampleLevel(sLin, i.pos.xy / scrSize, 0).rgb : float3(0.13, 0.13, 0.15);
+    // Soft drop shadow under the floating plane (in plane pixels, so it scales with zoom).
+    float2 q = hit - float2(0, 10);
+    float2 dd = max(max(-q, q - texSize), 0);
+    float shadow = valid ? exp(-length(dd) / 28.0) * 0.5 : 0;
+    bg *= 1 - shadow;
     float3 rgb = inside ? col.rgb : bg;
 
     float2 local = hit - (M - hot);
