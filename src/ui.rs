@@ -17,7 +17,7 @@ type Set = fn(&mut Settings, f32);
 type Fmt = fn(f32) -> String;
 
 enum Kind {
-    Slider { min: f32, step: f32, label: &'static str, get: Get, set: Set, fmt: Fmt, text: HWND },
+    Slider { min: f32, max: f32, step: f32, log: bool, label: &'static str, get: Get, set: Set, fmt: Fmt, text: HWND },
     Check { get: fn(&Settings) -> bool, set: fn(&mut Settings, bool) },
     Radio { on: fn(&Settings) -> bool, pick: fn(&mut Settings) },
 }
@@ -107,14 +107,23 @@ impl Layout {
     }
 
     fn slider(&mut self, label: &'static str, min: f32, max: f32, step: f32, get: Get, set: Set, fmt: Fmt) {
+        self.slider_ex(label, min, max, step, false, get, set, fmt);
+    }
+
+    /// `log`: positions are spaced geometrically from `min` (the smallest nonzero value) to `max`; the far-left stop is 0.
+    fn log_slider(&mut self, label: &'static str, min: f32, max: f32, get: Get, set: Set, fmt: Fmt) {
+        self.slider_ex(label, min, max, 0.0, true, get, set, fmt);
+    }
+
+    fn slider_ex(&mut self, label: &'static str, min: f32, max: f32, step: f32, log: bool, get: Get, set: Set, fmt: Fmt) {
         let id = self.id();
         let text = self.child(w!("STATIC"), label, 0, 12, self.y + 4, 190, 20, -1);
         let tb = self.child(w!("msctls_trackbar32"), "", (TBS_HORZ | TBS_NOTICKS) as u32, 200, self.y, 220, 28, id);
         unsafe {
-            let n = ((max - min) / step).round() as isize;
+            let n = if log { LOG_STEPS as isize } else { ((max - min) / step).round() as isize };
             SendMessageW(tb, TBM_SETRANGE, Some(WPARAM(1)), Some(LPARAM(n << 16)));
         }
-        self.ctls.push(Ctl { hwnd: tb, id, kind: Kind::Slider { min, step, label, get, set, fmt, text } });
+        self.ctls.push(Ctl { hwnd: tb, id, kind: Kind::Slider { min, max, step, log, label, get, set, fmt, text } });
         self.y += 30;
     }
 
@@ -161,11 +170,11 @@ pub fn create() {
 
         l.heading("Camera");
         l.slider("Zoom", 0.25, 16.0, 0.05, |s| s.zoom, |s, v| s.zoom = v, x2_zoom);
-        l.slider("Chase lag", 0.0, 3.0, 0.01, |s| s.lag, |s, v| s.lag = v, secs);
+        l.log_slider("Chase lag", 0.005, 3.0, |s| s.lag, |s, v| s.lag = v, secs);
         l.slider("Max tilt", 5.0, 80.0, 1.0, |s| s.max_tilt, |s, v| s.max_tilt = v, deg);
         l.check("Chase the mouse (let it drift off-center)", 12, 400, |s| s.aim_chase, |s, v| s.aim_chase = v);
         l.y += 26;
-        l.slider("Aim lag", 0.0, 3.0, 0.01, |s| s.aim_lag, |s, v| s.aim_lag = v, secs);
+        l.log_slider("Aim lag", 0.005, 3.0, |s| s.aim_lag, |s, v| s.aim_lag = v, secs);
         l.check("Hide the real mouse cursor", 12, 300, |s| s.hide_cursor, |s, v| s.hide_cursor = v);
         l.y += 26;
 
@@ -179,8 +188,8 @@ pub fn create() {
         l.radio("Circular fisheye", 140, 140, true, |s| s.warp_shape == Shape::Circle, |s| s.warp_shape = Shape::Circle);
         l.radio("Rectangular", 290, 120, false, |s| s.warp_shape == Shape::Rect, |s| s.warp_shape = Shape::Rect);
         l.y += 26;
-        l.slider("Clear radius", 0.0, 1.6, 0.01, |s| s.warp_radius, |s, v| s.warp_radius = v, x2);
-        l.slider("Warp amount", 0.0, 8.0, 0.05, |s| s.warp_amount, |s, v| s.warp_amount = v, x2);
+        l.slider("Clear radius", 0.0, 4.0, 0.01, |s| s.warp_radius, |s, v| s.warp_radius = v, x2);
+        l.slider("Warp amount", 0.0, 30.0, 0.1, |s| s.warp_amount, |s, v| s.warp_amount = v, x2);
         l.check("Top", 12, 80, |s| s.warp_top, |s, v| s.warp_top = v);
         l.check("Bottom", 100, 80, |s| s.warp_bottom, |s, v| s.warp_bottom = v);
         l.check("Left", 190, 80, |s| s.warp_left, |s, v| s.warp_left = v);
@@ -215,7 +224,28 @@ pub fn create() {
 fn x2_zoom(v: f32) -> String { format!("{v:.2}×") }
 fn x2_mul(v: f32) -> String { format!("{:.0}% of zoom", v * 100.0) }
 
-fn slider_pos(min: f32, step: f32, v: f32) -> isize { ((v - min) / step).round() as isize }
+const LOG_STEPS: usize = 1000;
+
+fn slider_pos(min: f32, max: f32, step: f32, log: bool, v: f32) -> isize {
+    if !log {
+        return ((v - min) / step).round() as isize;
+    }
+    if v < min * 0.5 {
+        return 0;
+    }
+    let t = (v / min).ln() / (max / min).ln();
+    (1.0 + t.clamp(0.0, 1.0) * (LOG_STEPS - 1) as f32).round() as isize
+}
+
+fn slider_value(min: f32, max: f32, step: f32, log: bool, pos: isize) -> f32 {
+    if !log {
+        return (min + pos as f32 * step).clamp(min, max);
+    }
+    if pos <= 0 {
+        return 0.0;
+    }
+    min * (max / min).powf((pos - 1) as f32 / (LOG_STEPS - 1) as f32)
+}
 
 /// Push the current settings into the controls (after a hotkey or the tray changed them).
 pub fn sync() {
@@ -226,9 +256,9 @@ pub fn sync() {
         unsafe {
             for c in &u.ctls {
                 match &c.kind {
-                    Kind::Slider { min, step, label, get, fmt, text, .. } => {
+                    Kind::Slider { min, max, step, log, label, get, fmt, text, .. } => {
                         let v = get(&s);
-                        SendMessageW(c.hwnd, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(slider_pos(*min, *step, v))));
+                        SendMessageW(c.hwnd, TBM_SETPOS, Some(WPARAM(1)), Some(LPARAM(slider_pos(*min, *max, *step, *log, v))));
                         let _ = SetWindowTextW(*text, &HSTRING::from(format!("{label}:  {}", fmt(v))));
                     }
                     Kind::Check { get, .. } => {
@@ -265,8 +295,8 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                     let u = u.as_ref()?;
                     for c in &u.ctls {
                         if c.hwnd == tb {
-                            if let Kind::Slider { min, step, label, set, fmt, text, .. } = &c.kind {
-                                let v = (min + pos as f32 * step).clamp(*min, 32.0);
+                            if let Kind::Slider { min, max, step, log, label, set, fmt, text, .. } = &c.kind {
+                                let v = slider_value(*min, *max, *step, *log, pos);
                                 return Some((*set, v, format!("{label}:  {}", fmt(v)), *text));
                             }
                         }

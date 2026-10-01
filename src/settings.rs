@@ -124,8 +124,8 @@ impl Settings {
         self.lag = self.lag.clamp(0.0, 3.0);
         self.max_tilt = self.max_tilt.clamp(1.0, 80.0);
         self.aim_lag = self.aim_lag.clamp(0.0, 3.0);
-        self.warp_radius = self.warp_radius.clamp(0.0, 2.0);
-        self.warp_amount = self.warp_amount.clamp(0.0, 10.0);
+        self.warp_radius = self.warp_radius.clamp(0.0, 4.0);
+        self.warp_amount = self.warp_amount.clamp(0.0, 30.0);
         self.hover_factor = self.hover_factor.clamp(0.05, 1.0);
     }
 }
