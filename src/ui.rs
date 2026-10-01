@@ -219,6 +219,7 @@ pub fn create() {
         let (fw, fh) = ((wr.right - wr.left) - cr.right, (wr.bottom - wr.top) - cr.bottom);
         let _ = SetWindowPos(hwnd, None, 0, 0, cw + fw, ch + fh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         let ctls = l.ctls;
+        place(hwnd);
         UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, ctls }));
         sync();
     }
@@ -276,10 +277,44 @@ pub fn sync() {
     });
 }
 
+/// Move the window to where it was last left, unless that spot is no longer on any monitor.
+fn place(hwnd: HWND) {
+    let s = settings::get();
+    if s.win_x == i32::MIN || s.win_y == i32::MIN {
+        return;
+    }
+    unsafe {
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r).is_err() {
+            return;
+        }
+        let want = RECT { left: s.win_x, top: s.win_y, right: s.win_x + (r.right - r.left), bottom: s.win_y + (r.bottom - r.top) };
+        // Require the title bar area to be on a monitor, so the window can always be grabbed.
+        let bar = RECT { left: want.left, top: want.top, right: want.right, bottom: want.top + 40 };
+        if !MonitorFromRect(&bar, MONITOR_DEFAULTTONULL).is_invalid() {
+            let _ = SetWindowPos(hwnd, None, want.left, want.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+}
+
+fn remember(hwnd: HWND) {
+    unsafe {
+        let mut r = RECT::default();
+        if IsIconic(hwnd).as_bool() || GetWindowRect(hwnd, &mut r).is_err() {
+            return;
+        }
+        settings::update(|s| {
+            s.win_x = r.left;
+            s.win_y = r.top;
+        });
+    }
+}
+
 pub fn show() {
     UI.with(|u| {
         if let Some(u) = u.borrow().as_ref() {
             unsafe {
+                place(u.hwnd);
                 let _ = ShowWindow(u.hwnd, SW_SHOW);
                 let _ = SetForegroundWindow(u.hwnd);
             }
@@ -342,7 +377,12 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                 }
                 LRESULT(0)
             }
+            WM_EXITSIZEMOVE => {
+                remember(h);
+                LRESULT(0)
+            }
             WM_CLOSE => {
+                remember(h);
                 let _ = ShowWindow(h, SW_HIDE);
                 LRESULT(0)
             }
