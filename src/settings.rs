@@ -26,6 +26,9 @@ pub struct Settings {
     pub lag: f32,
     /// Largest angle (degrees) the camera may tilt away from the plane normal.
     pub max_tilt: f32,
+    /// Let the view's center chase the mouse too, so the mouse can drift off-center.
+    pub aim_chase: bool,
+    pub aim_lag: f32,
     pub filter: Filter,
     pub hide_cursor: bool,
     pub warp_on: bool,
@@ -48,6 +51,8 @@ impl Settings {
             zoom: 2.0,
             lag: 0.18,
             max_tilt: 35.0,
+            aim_chase: false,
+            aim_lag: 0.25,
             filter: Filter::Pixelated,
             hide_cursor: true,
             warp_on: false,
@@ -70,6 +75,8 @@ impl Settings {
             ("zoom", self.zoom.to_string()),
             ("lag", self.lag.to_string()),
             ("max_tilt", self.max_tilt.to_string()),
+            ("aim_chase", b(self.aim_chase)),
+            ("aim_lag", self.aim_lag.to_string()),
             ("filter", ((self.filter == Filter::Smooth) as u8).to_string()),
             ("hide_cursor", b(self.hide_cursor)),
             ("warp_on", b(self.warp_on)),
@@ -93,6 +100,8 @@ impl Settings {
             "zoom" => if let Some(x) = f() { self.zoom = x },
             "lag" => if let Some(x) = f() { self.lag = x },
             "max_tilt" => if let Some(x) = f() { self.max_tilt = x },
+            "aim_chase" => self.aim_chase = b(),
+            "aim_lag" => if let Some(x) = f() { self.aim_lag = x },
             "filter" => self.filter = if b() { Filter::Smooth } else { Filter::Pixelated },
             "hide_cursor" => self.hide_cursor = b(),
             "warp_on" => self.warp_on = b(),
@@ -112,8 +121,9 @@ impl Settings {
     /// Fix anything a hand-edited file could break.
     pub fn clamp(&mut self) {
         self.zoom = self.zoom.clamp(0.25, 32.0);
-        self.lag = self.lag.clamp(0.0, 1.0);
-        self.max_tilt = self.max_tilt.clamp(1.0, 70.0);
+        self.lag = self.lag.clamp(0.0, 3.0);
+        self.max_tilt = self.max_tilt.clamp(1.0, 80.0);
+        self.aim_lag = self.aim_lag.clamp(0.0, 3.0);
         self.warp_radius = self.warp_radius.clamp(0.0, 2.0);
         self.warp_amount = self.warp_amount.clamp(0.0, 10.0);
         self.hover_factor = self.hover_factor.clamp(0.05, 1.0);

@@ -51,6 +51,8 @@ unsafe extern "system" fn overlay_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) ->
 struct Cam {
     px: f32,
     py: f32,
+    ax: f32,
+    ay: f32,
     zoom: f32,
 }
 
@@ -302,7 +304,7 @@ impl Renderer {
                 ps: ps.unwrap(),
                 aniso,
                 lin,
-                cam: Cam { px: 0.0, py: 0.0, zoom: 0.0 },
+                cam: Cam { px: 0.0, py: 0.0, ax: 0.0, ay: 0.0, zoom: 0.0 },
                 got_frame: false,
             })
         }
@@ -373,6 +375,8 @@ impl Renderer {
             c.zoom = target_zoom;
             c.px = mx;
             c.py = my;
+            c.ax = mx;
+            c.ay = my;
         }
         let kz = 1.0 - (-dt / 0.10).exp();
         c.zoom = (c.zoom.ln() + (target_zoom.ln() - c.zoom.ln()) * kz).exp();
@@ -385,14 +389,22 @@ impl Renderer {
             c.px += (mx - c.px) * a;
             c.py += (my - c.py) * a;
         }
-        let (mut ox, mut oy) = (mx - c.px, my - c.py);
+        if s.aim_chase && s.aim_lag > 0.001 {
+            let a = 1.0 - (-dt / s.aim_lag).exp();
+            c.ax += (mx - c.ax) * a;
+            c.ay += (my - c.ay) * a;
+        } else {
+            c.ax = mx;
+            c.ay = my;
+        }
+        let (mut ox, mut oy) = (c.ax - c.px, c.ay - c.py);
         let max_off = d * s.max_tilt.to_radians().tan();
         let len = (ox * ox + oy * oy).sqrt();
         if len > max_off {
             ox *= max_off / len;
             oy *= max_off / len;
-            c.px = mx - ox;
-            c.py = my - oy;
+            c.px = c.ax - ox;
+            c.py = c.ay - oy;
         }
 
         // Basis (plane: x right, y down, z toward the viewer).
