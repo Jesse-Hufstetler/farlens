@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
 use crate::cursor::{self, SysCursors};
-use crate::settings::{Filter, Settings, Shape};
+use crate::settings::{Settings, Shape};
 
 const SHADER: &str = include_str!("shader.hlsl");
 const OVERLAY_CLASS: PCWSTR = w!("FarlensOverlay");
@@ -417,7 +417,7 @@ impl Renderer {
             [wf, hf, wf, hf],
             [c.px, c.py, d, tan_half],
             [right[0], right[1], right[2], aspect],
-            [up[0], up[1], up[2], if s.filter == Filter::Smooth { 1.0 } else { 0.0 }],
+            [up[0], up[1], up[2], 0.0],
             [fwd[0], fwd[1], fwd[2], b(s.warp_on)],
             [mx, my, vis, 0.0],
             [self.cur_hot.0 as f32, self.cur_hot.1 as f32, if s.warp_shape == Shape::Rect { 1.0 } else { 0.0 }, s.warp_radius],

@@ -5,14 +5,6 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Filter {
-    /// Blocky when magnified, mip-filtered when shrunk (the Minecraft look).
-    Pixelated,
-    /// Bilinear when magnified, mip-filtered when shrunk.
-    Smooth,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Shape {
     Circle,
     Rect,
@@ -29,7 +21,6 @@ pub struct Settings {
     /// Let the view's center chase the mouse too, so the mouse can drift off-center.
     pub aim_chase: bool,
     pub aim_lag: f32,
-    pub filter: Filter,
     pub hide_cursor: bool,
     pub warp_on: bool,
     pub warp_shape: Shape,
@@ -48,22 +39,21 @@ impl Settings {
     pub const fn new() -> Self {
         Settings {
             active: true,
-            zoom: 2.0,
-            lag: 0.18,
+            zoom: 1.75,
+            lag: 0.182,
             max_tilt: 35.0,
-            aim_chase: false,
-            aim_lag: 0.25,
-            filter: Filter::Pixelated,
+            aim_chase: true,
+            aim_lag: 0.047,
             hide_cursor: true,
-            warp_on: false,
-            warp_shape: Shape::Circle,
-            warp_radius: 0.6,
-            warp_amount: 1.5,
+            warp_on: true,
+            warp_shape: Shape::Rect,
+            warp_radius: 0.83,
+            warp_amount: 30.0,
             warp_top: true,
             warp_bottom: true,
             warp_left: true,
             warp_right: true,
-            hover_on: false,
+            hover_on: true,
             hover_factor: 0.5,
         }
     }
@@ -77,7 +67,6 @@ impl Settings {
             ("max_tilt", self.max_tilt.to_string()),
             ("aim_chase", b(self.aim_chase)),
             ("aim_lag", self.aim_lag.to_string()),
-            ("filter", ((self.filter == Filter::Smooth) as u8).to_string()),
             ("hide_cursor", b(self.hide_cursor)),
             ("warp_on", b(self.warp_on)),
             ("warp_shape", ((self.warp_shape == Shape::Rect) as u8).to_string()),
@@ -102,7 +91,6 @@ impl Settings {
             "max_tilt" => if let Some(x) = f() { self.max_tilt = x },
             "aim_chase" => self.aim_chase = b(),
             "aim_lag" => if let Some(x) = f() { self.aim_lag = x },
-            "filter" => self.filter = if b() { Filter::Smooth } else { Filter::Pixelated },
             "hide_cursor" => self.hide_cursor = b(),
             "warp_on" => self.warp_on = b(),
             "warp_shape" => self.warp_shape = if b() { Shape::Rect } else { Shape::Circle },

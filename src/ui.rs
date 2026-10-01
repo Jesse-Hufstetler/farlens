@@ -10,7 +10,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
-use crate::settings::{self, Filter, Settings, Shape};
+use crate::settings::{self, Settings, Shape};
 
 type Get = fn(&Settings) -> f32;
 type Set = fn(&mut Settings, f32);
@@ -176,11 +176,6 @@ pub fn create() {
         l.y += 26;
         l.log_slider("Aim lag", 0.005, 3.0, |s| s.aim_lag, |s, v| s.aim_lag = v, secs);
         l.check("Hide the real mouse cursor", 12, 300, |s| s.hide_cursor, |s, v| s.hide_cursor = v);
-        l.y += 26;
-
-        l.heading("Look when zoomed");
-        l.radio("Blocky pixels (sharp up close)", 12, 220, true, |s| s.filter == Filter::Pixelated, |s| s.filter = Filter::Pixelated);
-        l.radio("Smooth / blurry", 240, 170, false, |s| s.filter == Filter::Smooth, |s| s.filter = Filter::Smooth);
         l.y += 26;
 
         l.heading("Warp");
