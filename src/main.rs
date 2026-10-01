@@ -5,6 +5,7 @@ mod render;
 mod settings;
 mod ui;
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::*;
@@ -75,9 +76,15 @@ fn main() {
                 ui::show();
             }
         }
+        // Keeps frames coming while Windows is inside a modal loop (e.g. dragging the settings window).
+        MAIN_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
         let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), None, 0).ok();
-
         run(dump);
+
+        // Tear the renderer down here, on purpose: leaving it to thread-local destructors at process
+        // exit runs D3D calls under the loader lock and can hang, and would skip restoring cursors.
+        STATE.with(|s| drop(s.borrow_mut().take()));
+        cursor::restore_all();
 
         if let Some(h) = hook {
             let _ = UnhookWindowsHookEx(h);
@@ -87,24 +94,52 @@ fn main() {
     }
 }
 
-/// The message pump and the frame loop in one.
+struct State {
+    renderer: Option<render::Renderer>,
+    cursors: cursor::SysCursors,
+    last: Instant,
+    next_hover: Instant,
+    next_top: Instant,
+    retry_at: Instant,
+    close_start: Instant,
+    hover: bool,
+    frames: u32,
+    dump: Option<String>,
+}
+
+thread_local! {
+    static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+}
+
+static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
+static TIMER_ON: AtomicBool = AtomicBool::new(false);
+static QUIT: AtomicBool = AtomicBool::new(false);
+
+/// The message pump. Frames are drawn by `tick`, which also runs from a timer so the
+/// view keeps moving while Windows is in a modal loop (dragging a window, etc.).
 fn run(dump: Option<String>) {
-    let mut renderer: Option<render::Renderer> = None;
-    let mut cursors = cursor::SysCursors::default();
-    let mut last = Instant::now();
-    let mut next_hover = Instant::now();
-    let mut next_top = Instant::now();
-    let mut retry_at = Instant::now();
-    let mut hover = false;
-    let mut close_start = Instant::now();
-    let mut frames = 0u32;
+    let now = Instant::now();
+    STATE.with(|s| {
+        *s.borrow_mut() = Some(State {
+            renderer: None,
+            cursors: cursor::SysCursors::default(),
+            last: now,
+            next_hover: now,
+            next_top: now,
+            retry_at: now,
+            close_start: now,
+            hover: false,
+            frames: 0,
+            dump,
+        })
+    });
 
     loop {
         unsafe {
             let mut msg = MSG::default();
-            let s = settings::get();
             // Sleep until something happens unless there is a frame to draw.
-            if renderer.is_none() && !s.active {
+            let idle = STATE.with(|s| s.borrow().as_ref().map_or(true, |s| s.renderer.is_none())) && !settings::get().active;
+            if idle {
                 if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
                     return;
                 }
@@ -119,81 +154,114 @@ fn run(dump: Option<String>) {
                 DispatchMessageW(&msg);
             }
         }
-        settings::save_if_due();
-        let s = settings::get();
-
-        if s.active && renderer.is_none() && Instant::now() >= retry_at {
-            match render::Renderer::new() {
-                Ok(r) => {
-                    renderer = Some(r);
-                    last = Instant::now();
-                }
-                Err(e) => {
-                    settings::log(&format!("renderer init failed: {e}"));
-                    retry_at = Instant::now() + Duration::from_secs(2);
-                }
-            }
-        }
-        if REBUILD.swap(false, Ordering::Relaxed) {
-            renderer = None;
-        }
-        if let Some(r) = renderer.as_mut() {
-            if !s.active && !r.closing {
-                r.closing = true;
-                close_start = Instant::now();
-            } else if s.active && r.closing {
-                r.closing = false;
-            }
-            if r.closing && (r.done || close_start.elapsed() > Duration::from_millis(1500)) {
-                renderer = None;
-            }
-        }
-        if renderer.is_some() && s.hide_cursor && dump.is_none() {
-            cursors.hide();
-        } else {
-            cursors.restore();
-        }
-
-        let Some(r) = renderer.as_mut() else {
-            if s.active {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            continue;
-        };
-        let now = Instant::now();
-        let dt = now.duration_since(last).as_secs_f32().min(0.1);
-        last = now;
-
-        if now >= next_hover {
-            next_hover = now + Duration::from_millis(60);
-            hover = s.hover_on && over_desktop(r.hwnd, hover);
-        }
-        if now >= next_top {
-            next_top = now + Duration::from_secs(1);
-            r.keep_on_top();
-        }
-        let zoom = s.zoom * if hover { s.hover_factor } else { 1.0 };
-
-        let mut pt = POINT::default();
-        unsafe {
-            let _ = GetCursorPos(&mut pt);
-        }
-        frames += 1;
-        let dump_now = match &dump {
-            Some(p) if frames == 40 => Some(p.as_str()),
-            _ => None,
-        };
-        if let Err(e) = r.frame(&s, zoom, (pt.x, pt.y), dt, &cursors, dump_now) {
-            settings::log(&format!("frame failed, rebuilding: {e}"));
-            renderer = None;
-            retry_at = Instant::now() + Duration::from_millis(500);
-        }
-        if dump.is_some() && frames >= 41 {
+        tick();
+        if QUIT.load(Ordering::Relaxed) {
             return;
         }
     }
 }
 
+fn tick() {
+    STATE.with(|cell| {
+        let Ok(mut guard) = cell.try_borrow_mut() else { return };
+        let Some(st) = guard.as_mut() else { return };
+        tick_inner(st);
+    });
+}
+
+/// Run the frame timer only while there is something to draw, so an idle Farlens sleeps.
+fn set_timer(on: bool) {
+    if TIMER_ON.swap(on, Ordering::Relaxed) == on {
+        return;
+    }
+    let h = HWND(MAIN_HWND.load(Ordering::Relaxed) as *mut _);
+    unsafe {
+        if on {
+            SetTimer(Some(h), 1, 8, None);
+        } else {
+            let _ = KillTimer(Some(h), 1);
+        }
+    }
+}
+
+fn tick_inner(st: &mut State) {
+    settings::save_if_due();
+    let s = settings::get();
+    let dumping = st.dump.is_some();
+    set_timer(s.active || st.renderer.is_some());
+
+    if s.active && st.renderer.is_none() && Instant::now() >= st.retry_at {
+        match render::Renderer::new() {
+            Ok(r) => {
+                st.renderer = Some(r);
+                st.last = Instant::now();
+            }
+            Err(e) => {
+                settings::log(&format!("renderer init failed: {e}"));
+                st.retry_at = Instant::now() + Duration::from_secs(2);
+            }
+        }
+    }
+    if REBUILD.swap(false, Ordering::Relaxed) {
+        st.renderer = None;
+    }
+    if let Some(r) = st.renderer.as_mut() {
+        if !s.active && !r.closing {
+            r.closing = true;
+            st.close_start = Instant::now();
+        } else if s.active && r.closing {
+            r.closing = false;
+        }
+        if r.closing && (r.done || st.close_start.elapsed() > Duration::from_millis(1500)) {
+            st.renderer = None;
+        }
+    }
+    if st.renderer.is_some() && s.hide_cursor && !dumping {
+        st.cursors.hide();
+    } else {
+        st.cursors.restore();
+    }
+
+    let Some(r) = st.renderer.as_mut() else {
+        if s.active {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        return;
+    };
+    let now = Instant::now();
+    let dt = now.duration_since(st.last).as_secs_f32().min(0.1);
+    st.last = now;
+
+    if now >= st.next_hover {
+        st.next_hover = now + Duration::from_millis(60);
+        st.hover = s.hover_on && over_desktop(r.hwnd, st.hover);
+    }
+    if now >= st.next_top {
+        st.next_top = now + Duration::from_secs(1);
+        r.keep_on_top();
+    }
+    let zoom = s.zoom * if st.hover { s.hover_factor } else { 1.0 };
+
+    let mut pt = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+    }
+    st.frames += 1;
+    let dump_now = match &st.dump {
+        Some(p) if st.frames == 40 => Some(p.as_str()),
+        _ => None,
+    };
+    if let Err(e) = r.frame(&s, zoom, (pt.x, pt.y), dt, &st.cursors, dump_now) {
+        settings::log(&format!("frame failed, rebuilding: {e}"));
+        st.renderer = None;
+        st.retry_at = Instant::now() + Duration::from_millis(500);
+    }
+    if dumping && st.frames >= 41 {
+        QUIT.store(true, Ordering::Relaxed);
+        // The timer keeps the pump busy, so also post WM_QUIT to make it return.
+        unsafe { PostQuitMessage(0) };
+    }
+}
 /// Is the pointer over the bare desktop (wallpaper / icons) rather than a window?
 fn over_desktop(overlay: HWND, previous: bool) -> bool {
     unsafe {
@@ -236,6 +304,10 @@ fn zoom_by(f: f32) {
 unsafe extern "system" fn main_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     unsafe {
         match m {
+            WM_TIMER => {
+                tick();
+                LRESULT(0)
+            }
             WM_HOTKEY => {
                 match w.0 as i32 {
                     HK_TOGGLE => toggle(),

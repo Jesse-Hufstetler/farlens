@@ -102,7 +102,7 @@ float4 ps(VO i) : SV_Target
     float2 q = hit - float2(0, shSize * 0.35);
     float2 dd = max(max(-q, q - texSize), 0);
     float shadow = valid ? exp(-length(dd) / shSize) * shStrength : 0;
-    bg *= 1 - shadow;
+    bg = lerp(bg, float3(0.42, 0.42, 0.44), shadow);
     float3 rgb = inside ? col.rgb : bg;
 
     float2 local = hit - (M - hot);
