@@ -59,7 +59,7 @@ impl Settings {
             bg_desktop: false,
             shadow: 0.5,
             shadow_size: 28.0,
-            bg_level: 0.13,
+            bg_level: 0.30,
             win_x: i32::MIN,
             win_y: i32::MIN,
             warp_on: true,
