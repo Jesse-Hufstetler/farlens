@@ -5,7 +5,7 @@ mod render;
 mod settings;
 mod ui;
 
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -27,6 +27,7 @@ const CMD_SETTINGS: usize = 2;
 const CMD_EXIT: usize = 3;
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 
+static REBUILD: AtomicBool = AtomicBool::new(false);
 static TASKBAR_CREATED: AtomicIsize = AtomicIsize::new(0);
 
 fn main() {
@@ -94,6 +95,7 @@ fn run(dump: Option<String>) {
     let mut next_top = Instant::now();
     let mut retry_at = Instant::now();
     let mut hover = false;
+    let mut close_start = Instant::now();
     let mut frames = 0u32;
 
     loop {
@@ -131,8 +133,19 @@ fn run(dump: Option<String>) {
                 }
             }
         }
-        if !s.active && renderer.is_some() {
+        if REBUILD.swap(false, Ordering::Relaxed) {
             renderer = None;
+        }
+        if let Some(r) = renderer.as_mut() {
+            if !s.active && !r.closing {
+                r.closing = true;
+                close_start = Instant::now();
+            } else if s.active && r.closing {
+                r.closing = false;
+            }
+            if r.closing && (r.done || close_start.elapsed() > Duration::from_millis(1500)) {
+                renderer = None;
+            }
         }
         if renderer.is_some() && s.hide_cursor && dump.is_none() {
             cursors.hide();
@@ -250,10 +263,7 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LR
             }
             WM_DISPLAYCHANGE => {
                 // Rebuild the renderer for the new resolution.
-                if settings::get().active {
-                    settings::update(|s| s.active = false);
-                    settings::update(|s| s.active = true);
-                }
+                REBUILD.store(true, Ordering::Relaxed);
                 LRESULT(0)
             }
             _ if m != 0 && m == TASKBAR_CREATED.load(Ordering::Relaxed) as u32 => {

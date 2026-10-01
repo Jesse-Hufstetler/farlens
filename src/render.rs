@@ -78,6 +78,10 @@ pub struct Renderer {
     lin: ID3D11SamplerState,
     cam: Cam,
     got_frame: bool,
+    blend: f32,
+    /// Set to start easing back to the plain desktop; done turns true when that finished.
+    pub closing: bool,
+    pub done: bool,
 }
 
 impl Drop for Renderer {
@@ -306,6 +310,9 @@ impl Renderer {
                 lin,
                 cam: Cam { px: 0.0, py: 0.0, ax: 0.0, ay: 0.0, zoom: 0.0 },
                 got_frame: false,
+                blend: 0.0,
+                closing: false,
+                done: false,
             })
         }
     }
@@ -403,33 +410,46 @@ impl Renderer {
         let f_px = (hf * 0.5) / tan_half;
         let (mx, my) = (mouse.0 as f32 + 0.5, mouse.1 as f32 + 0.5);
 
-        // Camera: zoom eases in log space; x,y chase the mouse; the aim never leaves it.
+        // Opening and closing ease the whole view between "plain 1:1 screen" (zoom 1,
+        // camera centered, no warp) and the live camera. `blend` runs 0..1.
+        let dir = if self.closing { -1.0 } else { 1.0 };
+        self.blend = (self.blend + dir * dt / 0.45).clamp(0.0, 1.0);
+        let blend = self.blend;
+        let (cx, cy) = (wf * 0.5, hf * 0.5);
+        let (tx, ty) = if self.closing { (cx, cy) } else { (mx, my) };
+        let zoom_goal = if self.closing { 1.0 } else { target_zoom };
+        let slow = 1.0 - blend; // extra smoothing while opening/closing
+        let tau = |user: f32| user.max(0.2 * slow);
+
+        // Camera: zoom eases in log space; x,y chase the mouse; the aim chases it too if asked.
         let c = &mut self.cam;
         if c.zoom <= 0.0 {
-            c.zoom = target_zoom;
-            c.px = mx;
-            c.py = my;
-            c.ax = mx;
-            c.ay = my;
+            c.zoom = 1.0;
+            c.px = cx;
+            c.py = cy;
+            c.ax = cx;
+            c.ay = cy;
         }
-        let kz = 1.0 - (-dt / 0.10).exp();
-        c.zoom = (c.zoom.ln() + (target_zoom.ln() - c.zoom.ln()) * kz).exp();
+        let kz = 1.0 - (-dt / (0.10 + 0.15 * slow)).exp();
+        c.zoom = (c.zoom.ln() + (zoom_goal.ln() - c.zoom.ln()) * kz).exp();
         let d = f_px / c.zoom;
-        if s.lag <= 0.001 {
-            c.px = mx;
-            c.py = my;
+        let lag = tau(s.lag);
+        if lag <= 0.001 {
+            c.px = tx;
+            c.py = ty;
         } else {
-            let a = 1.0 - (-dt / s.lag).exp();
-            c.px += (mx - c.px) * a;
-            c.py += (my - c.py) * a;
+            let a = 1.0 - (-dt / lag).exp();
+            c.px += (tx - c.px) * a;
+            c.py += (ty - c.py) * a;
         }
-        if s.aim_chase && s.aim_lag > 0.001 {
-            let a = 1.0 - (-dt / s.aim_lag).exp();
-            c.ax += (mx - c.ax) * a;
-            c.ay += (my - c.ay) * a;
+        let aim_lag = tau(if s.aim_chase { s.aim_lag } else { 0.0 });
+        if aim_lag > 0.001 {
+            let a = 1.0 - (-dt / aim_lag).exp();
+            c.ax += (tx - c.ax) * a;
+            c.ay += (ty - c.ay) * a;
         } else {
-            c.ax = mx;
-            c.ay = my;
+            c.ax = tx;
+            c.ay = ty;
         }
         let (mut ox, mut oy) = (c.ax - c.px, c.ay - c.py);
         let max_off = d * s.max_tilt.to_radians().tan();
@@ -440,7 +460,15 @@ impl Renderer {
             c.px = c.ax - ox;
             c.py = c.ay - oy;
         }
-
+        if self.closing {
+            self.done = blend <= 0.0
+                && (c.zoom - 1.0).abs() < 0.004
+                && (c.ax - cx).abs() < 1.0
+                && (c.ay - cy).abs() < 1.0
+                && (c.px - cx).abs() < 1.0
+                && (c.py - cy).abs() < 1.0;
+        }
+        let warp_k = blend * blend * (3.0 - 2.0 * blend);
         // Basis (plane: x right, y down, z toward the viewer).
         let fwd = norm([ox, oy, -d]);
         let right = norm(cross([0.0, -1.0, 0.0], fwd));
@@ -455,7 +483,7 @@ impl Renderer {
             [fwd[0], fwd[1], fwd[2], b(s.warp_on)],
             [mx, my, vis, 0.0],
             [self.cur_hot.0 as f32, self.cur_hot.1 as f32, if s.warp_shape == Shape::Rect { 1.0 } else { 0.0 }, s.warp_radius],
-            [s.warp_amount, b(s.warp_top), b(s.warp_bottom), b(s.warp_left)],
+            [s.warp_amount * warp_k, b(s.warp_top), b(s.warp_bottom), b(s.warp_left)],
             [b(s.warp_right), b(s.bg_desktop), 0.0, 0.0],
         ];
 
