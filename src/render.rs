@@ -53,6 +53,8 @@ struct Cam {
     py: f32,
     ax: f32,
     ay: f32,
+    sx: f32,
+    sy: f32,
     zoom: f32,
 }
 
@@ -308,7 +310,7 @@ impl Renderer {
                 ps: ps.unwrap(),
                 aniso,
                 lin,
-                cam: Cam { px: 0.0, py: 0.0, ax: 0.0, ay: 0.0, zoom: 0.0 },
+                cam: Cam { px: 0.0, py: 0.0, ax: 0.0, ay: 0.0, sx: 0.0, sy: 0.0, zoom: 0.0 },
                 got_frame: false,
                 blend: 0.0,
                 closing: false,
@@ -436,31 +438,34 @@ impl Renderer {
         let kz = if zt <= 1e-4 { 1.0 } else { 1.0 - (-dt / zt).exp() };
         c.zoom = (c.zoom.ln() + (zoom_goal.ln() - c.zoom.ln()) * kz).exp();
         let d = f_px / c.zoom;
-        let lag = tau(s.lag);
-        if lag <= 0.001 {
-            c.px = tx;
-            c.py = ty;
+        // 1) Input smoothing: the mouse as Farlens perceives it (kills jerky/stepped motion).
+        let sm = tau(s.smooth);
+        if sm > 0.001 {
+            let a = 1.0 - (-dt / sm).exp();
+            c.sx += (tx - c.sx) * a;
+            c.sy += (ty - c.sy) * a;
         } else {
-            let a = 1.0 - (-dt / lag).exp();
-            c.px += (tx - c.px) * a;
-            c.py += (ty - c.py) * a;
+            c.sx = tx;
+            c.sy = ty;
         }
-        // One smoothed mouse position (px,py) drives the camera. With "chase the mouse" the
-        // aim is that same smoothed point (flat, no tilt); otherwise the aim stays on the
-        // real mouse and the lagging camera leans toward it.
+        // 2) Camera chase: the camera position follows the smoothed mouse with its own lag.
+        let lag = tau(s.lag);
+        if lag > 0.001 {
+            let a = 1.0 - (-dt / lag).exp();
+            c.px += (c.sx - c.px) * a;
+            c.py += (c.sy - c.py) * a;
+        } else {
+            c.px = c.sx;
+            c.py = c.sy;
+        }
+        // 3) Aim: on the smoothed mouse (it stays centered and the lagging camera leans toward
+        //    it), or, with "chase the mouse", on the camera itself (flat view, mouse may drift).
         if s.aim_chase {
             c.ax = c.px;
             c.ay = c.py;
         } else {
-            let aim_lag = tau(0.0);
-            if aim_lag > 0.001 {
-                let a = 1.0 - (-dt / aim_lag).exp();
-                c.ax += (tx - c.ax) * a;
-                c.ay += (ty - c.ay) * a;
-            } else {
-                c.ax = tx;
-                c.ay = ty;
-            }
+            c.ax = c.sx;
+            c.ay = c.sy;
         }
         let (mut ox, mut oy) = (c.ax - c.px, c.ay - c.py);
         let max_off = d * s.max_tilt.to_radians().tan();
@@ -478,6 +483,8 @@ impl Renderer {
             c.py = cy;
             c.ax = cx;
             c.ay = cy;
+            c.sx = cx;
+            c.sy = cy;
             self.done = true;
         }
         let warp_k = blend * blend * (3.0 - 2.0 * blend);

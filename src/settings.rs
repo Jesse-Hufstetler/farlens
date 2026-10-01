@@ -18,9 +18,10 @@ pub struct Settings {
     pub lag: f32,
     /// Largest angle (degrees) the camera may tilt away from the plane normal.
     pub max_tilt: f32,
-    /// Let the view's center chase the mouse too, so the mouse can drift off-center.
+    /// Let the view follow the camera instead of the mouse, so the mouse can drift off-center.
     pub aim_chase: bool,
-    pub aim_lag: f32,
+    /// Seconds of low-pass smoothing on the raw mouse input.
+    pub smooth: f32,
     pub hide_cursor: bool,
     /// Show the unmagnified desktop instead of black beyond the plane's edge.
     pub bg_desktop: bool,
@@ -45,7 +46,7 @@ impl Settings {
             lag: 0.182,
             max_tilt: 35.0,
             aim_chase: true,
-            aim_lag: 0.047,
+            smooth: 0.05,
             hide_cursor: true,
             bg_desktop: false,
             warp_on: true,
@@ -69,7 +70,7 @@ impl Settings {
             ("lag", self.lag.to_string()),
             ("max_tilt", self.max_tilt.to_string()),
             ("aim_chase", b(self.aim_chase)),
-            ("aim_lag", self.aim_lag.to_string()),
+            ("smooth", self.smooth.to_string()),
             ("hide_cursor", b(self.hide_cursor)),
             ("bg_desktop", b(self.bg_desktop)),
             ("warp_on", b(self.warp_on)),
@@ -94,7 +95,7 @@ impl Settings {
             "lag" => if let Some(x) = f() { self.lag = x },
             "max_tilt" => if let Some(x) = f() { self.max_tilt = x },
             "aim_chase" => self.aim_chase = b(),
-            "aim_lag" => if let Some(x) = f() { self.aim_lag = x },
+            "smooth" => if let Some(x) = f() { self.smooth = x },
             "hide_cursor" => self.hide_cursor = b(),
             "bg_desktop" => self.bg_desktop = b(),
             "warp_on" => self.warp_on = b(),
@@ -116,7 +117,7 @@ impl Settings {
         self.zoom = self.zoom.clamp(0.25, 32.0);
         self.lag = self.lag.clamp(0.0, 3.0);
         self.max_tilt = self.max_tilt.clamp(1.0, 80.0);
-        self.aim_lag = self.aim_lag.clamp(0.0, 3.0);
+        self.smooth = self.smooth.clamp(0.0, 3.0);
         self.warp_radius = self.warp_radius.clamp(0.0, 4.0);
         self.warp_amount = self.warp_amount.clamp(0.0, 30.0);
         self.hover_factor = self.hover_factor.clamp(0.05, 1.0);

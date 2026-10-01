@@ -170,6 +170,7 @@ pub fn create() {
 
         l.heading("Camera");
         l.slider("Zoom", 0.25, 16.0, 0.05, |s| s.zoom, |s, v| s.zoom = v, x2_zoom);
+        l.log_slider("Mouse smoothing", 0.005, 1.0, |s| s.smooth, |s, v| s.smooth = v, secs);
         l.log_slider("Chase lag", 0.005, 3.0, |s| s.lag, |s, v| s.lag = v, secs);
         l.slider("Max tilt", 5.0, 80.0, 1.0, |s| s.max_tilt, |s, v| s.max_tilt = v, deg);
         l.check("Chase the mouse (flat view, mouse may drift off-center)", 12, 400, |s| s.aim_chase, |s, v| s.aim_chase = v);
