@@ -419,7 +419,9 @@ impl Renderer {
         let (tx, ty) = if self.closing { (cx, cy) } else { (mx, my) };
         let zoom_goal = if self.closing { 1.0 } else { target_zoom };
         let slow = 1.0 - blend; // extra smoothing while opening/closing
-        let tau = |user: f32| user.max(0.2 * slow);
+        // Opening is gentle. Closing gets quicker and quicker (tau -> 0) so it always lands exactly on 1:1.
+        let closing = self.closing;
+        let tau = |user: f32| if closing { user.max(0.12) * blend * blend } else { user.max(0.2 * slow) };
 
         // Camera: zoom eases in log space; x,y chase the mouse; the aim chases it too if asked.
         let c = &mut self.cam;
@@ -430,7 +432,8 @@ impl Renderer {
             c.ax = cx;
             c.ay = cy;
         }
-        let kz = 1.0 - (-dt / (0.10 + 0.15 * slow)).exp();
+        let zt = if closing { 0.10 * blend * blend } else { 0.10 + 0.15 * slow };
+        let kz = if zt <= 1e-4 { 1.0 } else { 1.0 - (-dt / zt).exp() };
         c.zoom = (c.zoom.ln() + (zoom_goal.ln() - c.zoom.ln()) * kz).exp();
         let d = f_px / c.zoom;
         let lag = tau(s.lag);
@@ -460,13 +463,14 @@ impl Renderer {
             c.px = c.ax - ox;
             c.py = c.ay - oy;
         }
-        if self.closing {
-            self.done = blend <= 0.0
-                && (c.zoom - 1.0).abs() < 0.004
-                && (c.ax - cx).abs() < 1.0
-                && (c.ay - cy).abs() < 1.0
-                && (c.px - cx).abs() < 1.0
-                && (c.py - cy).abs() < 1.0;
+        if closing && blend <= 0.0 {
+            // Fully eased out: land exactly on the plain desktop.
+            c.zoom = 1.0;
+            c.px = cx;
+            c.py = cy;
+            c.ax = cx;
+            c.ay = cy;
+            self.done = true;
         }
         let warp_k = blend * blend * (3.0 - 2.0 * blend);
         // Basis (plane: x right, y down, z toward the viewer).
