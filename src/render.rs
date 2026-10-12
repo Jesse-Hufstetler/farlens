@@ -449,15 +449,13 @@ impl Renderer {
             c.sy = ty;
         }
         // 2) Camera chase: the camera position follows the smoothed mouse with its own lag.
+        // The same lag time scaled by sqrt(aspect) up/down and 1/sqrt(aspect) side to side, so
+        // their ratio is the screen's aspect ratio: more lag where there is less to see ahead.
         let lag = tau(s.lag);
-        if lag > 0.001 {
-            let a = 1.0 - (-dt / lag).exp();
-            c.px += (c.sx - c.px) * a;
-            c.py += (c.sy - c.py) * a;
-        } else {
-            c.px = c.sx;
-            c.py = c.sy;
-        }
+        let ka = aspect.sqrt();
+        let step = |l: f32| if l > 0.001 { 1.0 - (-dt / l).exp() } else { 1.0 };
+        c.px += (c.sx - c.px) * step(lag / ka);
+        c.py += (c.sy - c.py) * step(lag * ka);
         // 3) Aim: on the smoothed mouse (it stays centered and the lagging camera leans toward
         //    it), or, with "chase the mouse", on the camera itself (flat view, mouse may drift).
         if s.aim_chase {

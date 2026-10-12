@@ -21,10 +21,13 @@ VO vs(uint id : SV_VertexID)
 
 // Identity up to R, then it stretches more and more: the center stays at full
 // magnification and the edges show progressively more of the plane.
+// The stretch is a * (1 + A d^2), not a + A d^2: with R = 0 the latter is
+// a + A|p| in vector form, a cone whose tip shows as a bump at the center.
+// This one is a cubic, smooth through the origin.
 float warp1(float a, float R, float A)
 {
     float d = max(a - R, 0);
-    return a <= R ? a : R + d * (1 + A * d);
+    return a * (1 + A * d * d);
 }
 
 // "Sharp bilinear": texels stay square, only the seams between them are

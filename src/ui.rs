@@ -6,7 +6,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::*;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
@@ -32,6 +32,10 @@ struct Ctl {
 struct Ui {
     hwnd: HWND,
     ctls: Vec<Ctl>,
+    /// Height of all the controls in 96-dpi units (the scroll range).
+    content_h: i32,
+    /// Smallest outer window size, in pixels.
+    min_size: (i32, i32),
 }
 
 thread_local! {
@@ -155,7 +159,7 @@ pub fn create() {
             WINDOW_EX_STYLE(0),
             CLASS,
             w!("Farlens"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME | WS_VSCROLL,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             100,
@@ -168,6 +172,10 @@ pub fn create() {
         .unwrap_or_default();
         let dpi = GetDpiForWindow(hwnd).max(96);
         let s = dpi as f32 / 96.0;
+        for (which, metric) in [(ICON_SMALL, SM_CXSMICON), (ICON_BIG, SM_CXICON)] {
+            let icon = crate::app_icon(GetSystemMetricsForDpi(metric, dpi));
+            SendMessageW(hwnd, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(icon.0 as isize)));
+        }
         let font = CreateFontW(-((9.0 * dpi as f32) / 72.0).round() as i32, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, 0, w!("Segoe UI"));
 
         let mut l = Layout { y: 8, s, font, parent: hwnd, hi, next_id: 1000, ctls: Vec::new() };
@@ -193,7 +201,7 @@ pub fn create() {
         l.radio("Rectangular", 290, 120, false, |s| s.warp_shape == Shape::Rect, |s| s.warp_shape = Shape::Rect);
         l.y += 26;
         l.slider("Clear radius", 0.0, 4.0, 0.01, |s| s.warp_radius, |s, v| s.warp_radius = v, x2);
-        l.slider("Warp amount", 0.0, 30.0, 0.1, |s| s.warp_amount, |s, v| s.warp_amount = v, x2);
+        l.log_slider("Warp amount", 0.05, 30.0, |s| s.warp_amount, |s, v| s.warp_amount = v, x2);
         l.check("Top", 12, 80, |s| s.warp_top, |s, v| s.warp_top = v);
         l.check("Bottom", 100, 80, |s| s.warp_bottom, |s, v| s.warp_bottom = v);
         l.check("Left", 190, 80, |s| s.warp_left, |s, v| s.warp_left = v);
@@ -227,10 +235,23 @@ pub fn create() {
         let _ = GetWindowRect(hwnd, &mut wr);
         let _ = GetClientRect(hwnd, &mut cr);
         let (fw, fh) = ((wr.right - wr.left) - cr.right, (wr.bottom - wr.top) - cr.bottom);
-        let _ = SetWindowPos(hwnd, None, 0, 0, cw + fw, ch + fh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-        let ctls = l.ctls;
+        let (mut win_w, mut win_h) = (cw + fw, ch + fh);
+        // On a short screen, cap the height at the work area and scroll instead.
+        let work = work_area(hwnd);
+        let max_h = work.bottom - work.top;
+        let sbw = GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+        if win_h > max_h {
+            win_w += sbw;
+            win_h = max_h;
+        }
+        let min_size = (cw + fw + sbw, (240.0 * s) as i32 + fh);
+        let _ = SetWindowPos(hwnd, None, 0, 0, win_w, win_h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        let ctls = std::mem::take(&mut l.ctls);
         place(hwnd);
-        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, ctls }));
+        fit_on_screen(hwnd);
+        let content_h = l.y;
+        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, ctls, content_h, min_size }));
+        on_size(hwnd);
         sync();
     }
 }
@@ -288,6 +309,97 @@ pub fn sync() {
     });
 }
 
+fn work_area(hwnd: HWND) -> RECT {
+    unsafe {
+        let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if GetMonitorInfoW(mon, &mut mi).as_bool() {
+            mi.rcWork
+        } else {
+            RECT { left: 0, top: 0, right: 1024, bottom: 768 }
+        }
+    }
+}
+
+/// Nudge the window so it lies inside the work area of the monitor it is on.
+fn fit_on_screen(hwnd: HWND) {
+    unsafe {
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r).is_err() {
+            return;
+        }
+        let w = work_area(hwnd);
+        let (ww, wh) = (r.right - r.left, r.bottom - r.top);
+        let x = r.left.min(w.right - ww).max(w.left);
+        let y = r.top.min(w.bottom - wh).max(w.top);
+        if (x, y) != (r.left, r.top) {
+            let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+}
+
+/// After any resize: stretch the sliders to the new width and fit the scroll range to the new height.
+fn on_size(h: HWND) {
+    unsafe {
+        let mut cr = RECT::default();
+        if GetClientRect(h, &mut cr).is_err() {
+            return;
+        }
+        let s = GetDpiForWindow(h).max(96) as f32 / 96.0;
+        let slider_w = (cr.right - (212.0 * s) as i32).max((220.0 * s) as i32);
+        let content = UI.with(|u| {
+            let u = u.borrow();
+            let u = u.as_ref()?;
+            for c in &u.ctls {
+                if matches!(c.kind, Kind::Slider { .. }) {
+                    let mut r = RECT::default();
+                    if GetWindowRect(c.hwnd, &mut r).is_ok() {
+                        let _ = SetWindowPos(c.hwnd, None, 0, 0, slider_w, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
+                }
+            }
+            Some((u.content_h as f32 * s) as i32)
+        });
+        let Some(content) = content else { return };
+        let mut si = SCROLLINFO { cbSize: std::mem::size_of::<SCROLLINFO>() as u32, fMask: SIF_ALL, ..Default::default() };
+        if GetScrollInfo(h, SB_VERT, &mut si).is_err() {
+            return;
+        }
+        let old = si.nPos;
+        si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+        si.nMin = 0;
+        si.nMax = content - 1;
+        si.nPage = cr.bottom as u32;
+        SetScrollInfo(h, SB_VERT, &si, true);
+        // The system clamps the position when the page grows; move the controls to match.
+        let mut now = SCROLLINFO { cbSize: std::mem::size_of::<SCROLLINFO>() as u32, fMask: SIF_POS, ..Default::default() };
+        if GetScrollInfo(h, SB_VERT, &mut now).is_ok() && now.nPos != old {
+            let _ = ScrollWindowEx(h, 0, old - now.nPos, None, None, None, None, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+        }
+        let _ = InvalidateRect(Some(h), None, true);
+    }
+}
+
+/// Scroll the content so `pos` (clamped) is the top of the visible area.
+fn scroll_to(h: HWND, pos: i32) {
+    unsafe {
+        let mut si = SCROLLINFO { cbSize: std::mem::size_of::<SCROLLINFO>() as u32, fMask: SIF_ALL, ..Default::default() };
+        if GetScrollInfo(h, SB_VERT, &mut si).is_err() {
+            return;
+        }
+        let top = (si.nMax - si.nPage as i32 + 1).max(0);
+        let pos = pos.clamp(0, top);
+        let dy = si.nPos - pos;
+        if dy == 0 {
+            return;
+        }
+        si.fMask = SIF_POS;
+        si.nPos = pos;
+        SetScrollInfo(h, SB_VERT, &si, true);
+        let _ = ScrollWindowEx(h, 0, dy, None, None, None, None, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+    }
+}
+
 /// Move the window to where it was last left, unless that spot is no longer on any monitor.
 fn place(hwnd: HWND) {
     let s = settings::get();
@@ -328,6 +440,7 @@ pub fn show() {
     let Some(hwnd) = hwnd else { return };
     unsafe {
         place(hwnd);
+        fit_on_screen(hwnd);
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
         let mut r = RECT::default();
@@ -359,6 +472,47 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                 if let Some((set, v, label, text)) = hit {
                     let _ = SetWindowTextW(text, &HSTRING::from(label));
                     settings::update(|s| set(s, v));
+                }
+                LRESULT(0)
+            }
+            WM_SIZE => {
+                on_size(h);
+                LRESULT(0)
+            }
+            WM_GETMINMAXINFO => {
+                let min = UI.with(|u| u.borrow().as_ref().map(|u| u.min_size));
+                if let Some((mw, mh)) = min {
+                    let mmi = &mut *(l.0 as *mut MINMAXINFO);
+                    mmi.ptMinTrackSize.x = mw;
+                    mmi.ptMinTrackSize.y = mh;
+                }
+                LRESULT(0)
+            }
+            WM_VSCROLL => {
+                let mut si = SCROLLINFO { cbSize: std::mem::size_of::<SCROLLINFO>() as u32, fMask: SIF_ALL, ..Default::default() };
+                if GetScrollInfo(h, SB_VERT, &mut si).is_ok() {
+                    let line = 30 * GetDpiForWindow(h).max(96) as i32 / 96;
+                    let page = si.nPage as i32;
+                    let pos = match SCROLLBAR_COMMAND((w.0 & 0xFFFF) as i32) {
+                        SB_LINEUP => si.nPos - line,
+                        SB_LINEDOWN => si.nPos + line,
+                        SB_PAGEUP => si.nPos - page,
+                        SB_PAGEDOWN => si.nPos + page,
+                        SB_THUMBTRACK | SB_THUMBPOSITION => si.nTrackPos,
+                        SB_TOP => 0,
+                        SB_BOTTOM => i32::MAX / 2,
+                        _ => si.nPos,
+                    };
+                    scroll_to(h, pos);
+                }
+                LRESULT(0)
+            }
+            WM_MOUSEWHEEL => {
+                let mut si = SCROLLINFO { cbSize: std::mem::size_of::<SCROLLINFO>() as u32, fMask: SIF_ALL, ..Default::default() };
+                if GetScrollInfo(h, SB_VERT, &mut si).is_ok() {
+                    let notches = ((w.0 >> 16) as u16 as i16 as i32) / 120;
+                    let line = 30 * GetDpiForWindow(h).max(96) as i32 / 96;
+                    scroll_to(h, si.nPos - notches * line * 3);
                 }
                 LRESULT(0)
             }

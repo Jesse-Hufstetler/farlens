@@ -9,7 +9,6 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::CreateMutexW;
@@ -346,36 +345,19 @@ fn toggle() {
     ui::sync();
 }
 
-fn tray_icon() -> HICON {
-    // A magnifying glass, drawn per pixel with soft edges.
-    const N: i32 = 32;
-    let mut px = vec![0u8; (N * N * 4) as usize];
-    for y in 0..N {
-        for x in 0..N {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            let ring = ((((fx - 13.0).powi(2) + (fy - 13.0).powi(2)).sqrt() - 8.0).abs() - 1.8).max(-1.0);
-            // handle: distance to the segment (19,19)-(28,28)
-            let (ax, ay, bx, by) = (19.0f32, 19.0f32, 28.0f32, 28.0f32);
-            let t = (((fx - ax) * (bx - ax) + (fy - ay) * (by - ay)) / ((bx - ax).powi(2) + (by - ay).powi(2))).clamp(0.0, 1.0);
-            let handle = (((fx - (ax + t * (bx - ax))).powi(2) + (fy - (ay + t * (by - ay))).powi(2)).sqrt() - 2.2).max(-1.0);
-            let d = ring.min(handle);
-            let a = (0.5 - d).clamp(0.0, 1.0);
-            let i = ((y * N + x) * 4) as usize;
-            px[i] = 255;
-            px[i + 1] = 190;
-            px[i + 2] = 90;
-            px[i + 3] = (a * 255.0) as u8;
+/// The app icon (resource 1, baked in by build.rs) at the given pixel size.
+pub fn app_icon(size: i32) -> HICON {
+    unsafe {
+        let hi = GetModuleHandleW(None).unwrap_or_default();
+        match LoadImageW(Some(hi.into()), PCWSTR(1 as *const u16), IMAGE_ICON, size, size, LR_DEFAULTCOLOR) {
+            Ok(h) => HICON(h.0),
+            Err(_) => HICON::default(),
         }
     }
-    unsafe {
-        let color = CreateBitmap(N, N, 1, 32, Some(px.as_ptr() as *const _));
-        let mask = CreateBitmap(N, N, 1, 1, Some([0u8; 128].as_ptr() as *const _));
-        let ii = ICONINFO { fIcon: true.into(), xHotspot: 0, yHotspot: 0, hbmMask: mask, hbmColor: color };
-        let icon = CreateIconIndirect(&ii).unwrap_or_default();
-        let _ = DeleteObject(color.into());
-        let _ = DeleteObject(mask.into());
-        icon
-    }
+}
+
+fn tray_icon() -> HICON {
+    app_icon(unsafe { GetSystemMetrics(SM_CXSMICON) })
 }
 
 fn add_tray(h: HWND) {
