@@ -187,6 +187,7 @@ pub fn create() {
         l.slider("Zoom", 0.25, 16.0, 0.05, |s| s.zoom, |s, v| s.zoom = v, x2_zoom);
         l.log_slider("Mouse smoothing", 0.005, 1.0, |s| s.smooth, |s, v| s.smooth = v, secs);
         l.log_slider("Chase lag", 0.005, 3.0, |s| s.lag, |s, v| s.lag = v, secs);
+        l.slider("Lag skew", 0.0, 8.0, 0.1, |s| s.lag_skew, |s, v| s.lag_skew = v, x2);
         l.slider("Max tilt", 5.0, 80.0, 1.0, |s| s.max_tilt, |s, v| s.max_tilt = v, deg);
         l.check("Chase the mouse (flat view, mouse may drift off-center)", 12, 400, |s| s.aim_chase, |s, v| s.aim_chase = v);
         l.y += 26;
@@ -224,7 +225,7 @@ pub fn create() {
         l.heading("Hotkeys (work from anywhere)");
         l.child(w!("STATIC"), "Ctrl+Alt+Z  -  magnifier on / off\r\nCtrl+Alt+S  -  open this window (moves the mouse here)\r\nCtrl+Alt+Q  -  quit Farlens\r\nCtrl+Alt+wheel, or Ctrl+Alt + / -  -  zoom", 0, 12, l.y, 410, 80, -1);
         l.y += 84;
-        l.button("Quit Farlens", 12, 140, || PostQuitMessage(0));
+        l.button("Quit Farlens", 12, 140, crate::request_quit);
         l.y += 4;
         l.y += 26;
 

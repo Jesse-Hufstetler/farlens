@@ -18,6 +18,9 @@ pub struct Settings {
     pub lag: f32,
     /// Largest angle (degrees) the camera may tilt away from the plane normal.
     pub max_tilt: f32,
+    /// Up/down chase lag is this many times the side-to-side lag per power of the screen's aspect
+    /// ratio: the ratio of the two is aspect^lag_skew. 0 = same both ways.
+    pub lag_skew: f32,
     /// Let the view follow the camera instead of the mouse, so the mouse can drift off-center.
     pub aim_chase: bool,
     /// Seconds of low-pass smoothing on the raw mouse input.
@@ -53,6 +56,7 @@ impl Settings {
             zoom: 3.93,
             lag: 0.499,
             max_tilt: 80.0,
+            lag_skew: 2.0,
             aim_chase: false,
             smooth: 0.037,
             hide_cursor: true,
@@ -82,6 +86,7 @@ impl Settings {
             ("zoom", self.zoom.to_string()),
             ("lag", self.lag.to_string()),
             ("max_tilt", self.max_tilt.to_string()),
+            ("lag_skew", self.lag_skew.to_string()),
             ("aim_chase", b(self.aim_chase)),
             ("smooth", self.smooth.to_string()),
             ("hide_cursor", b(self.hide_cursor)),
@@ -112,6 +117,7 @@ impl Settings {
             "zoom" => if let Some(x) = f() { self.zoom = x },
             "lag" => if let Some(x) = f() { self.lag = x },
             "max_tilt" => if let Some(x) = f() { self.max_tilt = x },
+            "lag_skew" => if let Some(x) = f() { self.lag_skew = x },
             "aim_chase" => self.aim_chase = b(),
             "smooth" => if let Some(x) = f() { self.smooth = x },
             "hide_cursor" => self.hide_cursor = b(),
@@ -140,6 +146,7 @@ impl Settings {
         self.zoom = self.zoom.clamp(0.25, 32.0);
         self.lag = self.lag.clamp(0.0, 3.0);
         self.max_tilt = self.max_tilt.clamp(1.0, 80.0);
+        self.lag_skew = self.lag_skew.clamp(0.0, 8.0);
         self.smooth = self.smooth.clamp(0.0, 3.0);
         self.shadow = self.shadow.clamp(0.0, 1.0);
         self.shadow_size = self.shadow_size.clamp(2.0, 300.0);

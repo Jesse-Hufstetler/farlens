@@ -1,6 +1,6 @@
 [package]
 name = "farlens"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A tray magnifier that puts your whole screen on a floating 3D plane"
 

@@ -449,10 +449,10 @@ impl Renderer {
             c.sy = ty;
         }
         // 2) Camera chase: the camera position follows the smoothed mouse with its own lag.
-        // The same lag time scaled by sqrt(aspect) up/down and 1/sqrt(aspect) side to side, so
-        // their ratio is the screen's aspect ratio: more lag where there is less to see ahead.
+        // Up/down lag is scaled by aspect^(skew/2) and side to side by the inverse, so their
+        // ratio is aspect^skew: more lag where there is less to see ahead. Skew 0 = isotropic.
         let lag = tau(s.lag);
-        let ka = aspect.sqrt();
+        let ka = aspect.powf(s.lag_skew * 0.5);
         let step = |l: f32| if l > 0.001 { 1.0 - (-dt / l).exp() } else { 1.0 };
         c.px += (c.sx - c.px) * step(lag / ka);
         c.py += (c.sy - c.py) * step(lag * ka);

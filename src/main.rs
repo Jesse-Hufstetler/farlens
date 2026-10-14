@@ -113,6 +113,17 @@ thread_local! {
 static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 static TIMER_ON: AtomicBool = AtomicBool::new(false);
 static QUIT: AtomicBool = AtomicBool::new(false);
+/// Set when the user asked to quit: the view eases back to the plain desktop, then the app exits.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// Quit with the same closing animation as turning the magnifier off. Asking again while it
+/// is still easing out quits immediately.
+pub fn request_quit() {
+    let idle = STATE.with(|s| s.try_borrow().map_or(false, |s| s.as_ref().map_or(true, |s| s.renderer.is_none())));
+    if QUITTING.swap(true, Ordering::Relaxed) || idle {
+        unsafe { PostQuitMessage(0) };
+    }
+}
 
 /// The message pump. Frames are drawn by `tick`, which also runs from a timer so the
 /// view keeps moving while Windows is in a modal loop (dragging a window, etc.).
@@ -187,9 +198,11 @@ fn tick_inner(st: &mut State) {
     settings::save_if_due();
     let s = settings::get();
     let dumping = st.dump.is_some();
-    set_timer(s.active || st.renderer.is_some());
+    // Settings are untouched on quit: "active" stays as the user left it for the next start.
+    let want = s.active && !QUITTING.load(Ordering::Relaxed);
+    set_timer(want || st.renderer.is_some());
 
-    if s.active && st.renderer.is_none() && Instant::now() >= st.retry_at {
+    if want && st.renderer.is_none() && Instant::now() >= st.retry_at {
         match render::Renderer::new() {
             Ok(r) => {
                 st.renderer = Some(r);
@@ -205,15 +218,18 @@ fn tick_inner(st: &mut State) {
         st.renderer = None;
     }
     if let Some(r) = st.renderer.as_mut() {
-        if !s.active && !r.closing {
+        if !want && !r.closing {
             r.closing = true;
             st.close_start = Instant::now();
-        } else if s.active && r.closing {
+        } else if want && r.closing {
             r.closing = false;
         }
         if r.closing && (r.done || st.close_start.elapsed() > Duration::from_millis(1500)) {
             st.renderer = None;
         }
+    }
+    if QUITTING.load(Ordering::Relaxed) && st.renderer.is_none() {
+        unsafe { PostQuitMessage(0) };
     }
     if st.renderer.is_some() && s.hide_cursor && !dumping {
         st.cursors.hide();
@@ -222,7 +238,7 @@ fn tick_inner(st: &mut State) {
     }
 
     let Some(r) = st.renderer.as_mut() else {
-        if s.active {
+        if want {
             std::thread::sleep(Duration::from_millis(50));
         }
         return;
@@ -313,7 +329,7 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LR
                     HK_IN => zoom_by(1.2),
                     HK_OUT => zoom_by(1.0 / 1.2),
                     HK_SETTINGS => ui::show(),
-                    HK_QUIT => PostQuitMessage(0),
+                    HK_QUIT => request_quit(),
                     _ => {}
                 }
                 LRESULT(0)
