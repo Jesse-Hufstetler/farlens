@@ -6,7 +6,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::*;
-use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
@@ -36,6 +36,10 @@ struct Ui {
     content_h: i32,
     /// Smallest outer window size, in pixels.
     min_size: (i32, i32),
+    /// Every child with its 96-dpi rect (x, y, w, h), so the layout can be rescaled on a DPI change.
+    kids: Vec<(HWND, [i32; 4])>,
+    font: HFONT,
+    tip_hwnd: HWND,
 }
 
 thread_local! {
@@ -78,6 +82,7 @@ struct Layout {
     /// The tooltip control, and the controls the next `tip` call applies to.
     tip_hwnd: HWND,
     last: Vec<HWND>,
+    kids: RefCell<Vec<(HWND, [i32; 4])>>,
 }
 
 impl Layout {
@@ -102,6 +107,7 @@ impl Layout {
             )
             .unwrap_or_default();
             SendMessageW(hw, WM_SETFONT, Some(WPARAM(self.font.0 as usize)), Some(LPARAM(1)));
+            self.kids.borrow_mut().push((hw, [x, y, w, h]));
             hw
         }
     }
@@ -224,7 +230,7 @@ pub fn create() {
         SendMessageW(tip_hwnd, TTM_SETDELAYTIME, Some(WPARAM(3)), Some(LPARAM(400))); // initial delay
         SendMessageW(tip_hwnd, TTM_SETDELAYTIME, Some(WPARAM(2)), Some(LPARAM(30000))); // stays up
 
-        let mut l = Layout { y: 8, s, font, parent: hwnd, hi, next_id: 1000, ctls: Vec::new(), tip_hwnd, last: Vec::new() };
+        let mut l = Layout { y: 8, s, font, parent: hwnd, hi, next_id: 1000, ctls: Vec::new(), tip_hwnd, last: Vec::new(), kids: RefCell::new(Vec::new()) };
 
         l.check("Magnifier on   (Ctrl+Alt+Z)", 12, 300, |s| s.active, |s, v| s.active = v);
         l.tip("Turns the magnifier on or off. It eases in and out.");
@@ -322,7 +328,8 @@ pub fn create() {
         place(hwnd);
         fit_on_screen(hwnd);
         let content_h = l.y;
-        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, ctls, content_h, min_size }));
+        let kids = l.kids.take();
+        UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, ctls, content_h, min_size, kids, font, tip_hwnd }));
         on_size(hwnd);
         sync();
     }
@@ -472,6 +479,41 @@ fn scroll_to(h: HWND, pos: i32) {
     }
 }
 
+/// The display scaling changed while running: rescale every control, the font and the minimum size.
+fn on_dpi_changed(h: HWND, dpi: u32, suggested: &RECT) {
+    unsafe {
+        let dpi = dpi.max(96);
+        let s = dpi as f32 / 96.0;
+        scroll_to(h, 0); // children back to their unscrolled positions
+        let font = CreateFontW(-((9.0 * dpi as f32) / 72.0).round() as i32, 0, 0, 0, 400, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, 0, w!("Segoe UI"));
+        let sc = |v: i32| (v as f32 * s).round() as i32;
+        let old_font = UI.with(|u| {
+            let mut u = u.borrow_mut();
+            let u = u.as_mut()?;
+            for (hw, [x, y, w, hh]) in &u.kids {
+                let _ = SetWindowPos(*hw, None, sc(*x), sc(*y), sc(*w), sc(*hh), SWP_NOZORDER | SWP_NOACTIVATE);
+                SendMessageW(*hw, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+            }
+            SendMessageW(u.tip_hwnd, TTM_SETMAXTIPWIDTH, None, Some(LPARAM(sc(340) as isize)));
+            let mut frame = RECT::default();
+            let _ = AdjustWindowRectExForDpi(&mut frame, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME, false, WINDOW_EX_STYLE(0), dpi);
+            let sbw = GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+            u.min_size = (sc(432) + (frame.right - frame.left) + sbw, sc(240) + (frame.bottom - frame.top));
+            Some(std::mem::replace(&mut u.font, font))
+        });
+        if let Some(old) = old_font {
+            let _ = DeleteObject(old.into());
+        }
+        let _ = SetWindowPos(h, None, suggested.left, suggested.top, suggested.right - suggested.left, suggested.bottom - suggested.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        for (which, metric) in [(ICON_SMALL, SM_CXSMICON), (ICON_BIG, SM_CXICON)] {
+            let icon = crate::app_icon(GetSystemMetricsForDpi(metric, dpi));
+            SendMessageW(h, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(icon.0 as isize)));
+        }
+        on_size(h);
+        let _ = InvalidateRect(Some(h), None, true);
+    }
+}
+
 /// Move the window to where it was last left, unless that spot is no longer on any monitor.
 fn place(hwnd: HWND) {
     let s = settings::get();
@@ -545,6 +587,10 @@ unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT
                     let _ = SetWindowTextW(text, &HSTRING::from(label));
                     settings::update(|s| set(s, v));
                 }
+                LRESULT(0)
+            }
+            WM_DPICHANGED => {
+                on_dpi_changed(h, ((w.0 >> 16) & 0xFFFF) as u32, &*(l.0 as *const RECT));
                 LRESULT(0)
             }
             WM_SIZE => {
